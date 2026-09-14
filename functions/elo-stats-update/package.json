@@ -1,0 +1,16 @@
+{
+  "name": "elo-stats-update",
+  "version": "1.0.0",
+  "description": "Elo rating and user_stats/teams updates for completed games",
+  "main": "src/main.js",
+  "type": "module",
+  "scripts": {
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "node-appwrite": "^21.1.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.2.5"
+  }
+}

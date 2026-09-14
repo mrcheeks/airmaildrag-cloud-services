@@ -1,0 +1,10 @@
+{
+  "name": "cleanup-guests",
+  "version": "1.0.0",
+  "description": "Cleanup guest players from completed tournaments older than 24 hours",
+  "main": "src/main.js",
+  "type": "module",
+  "dependencies": {
+    "node-appwrite": "^14.0.0"
+  }
+}

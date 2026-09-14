@@ -1,0 +1,10 @@
+{
+	"name": "recalculate-rolling-stats",
+	"version": "1.0.0",
+	"description": "Recalculate rolling window stats (30/90 day, 3mo/6mo) for solo and rival game stats",
+	"main": "src/main.js",
+	"type": "module",
+	"dependencies": {
+		"node-appwrite": "^14.0.0"
+	}
+}

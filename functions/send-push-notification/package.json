@@ -1,0 +1,10 @@
+{
+  "name": "send-push-notification",
+  "version": "1.0.0",
+  "description": "Send push notifications to users via Web Push",
+  "main": "src/main.js",
+  "dependencies": {
+    "node-appwrite": "^14.0.0",
+    "web-push": "^3.6.7"
+  }
+}
