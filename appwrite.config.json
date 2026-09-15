@@ -25,13 +25,7 @@
             "entrypoint": "src/main.js",
             "commands": "npm install",
             "specification": "s-2vcpu-2gb",
-            "path": "functions/send-push-notification",
-            "variables": {
-                "VAPID_PUBLIC_KEY": "BG4yik11apXLgVA-WoiQHEJVm8nCDUlN0PlSkXf6VdF1zA4_XWo_FUJeQs1tv1C2QYhyG3wDHhEEaflGEanC8zY",
-                "VAPID_PRIVATE_KEY": "5ybdsv5mlbCa6FYNcWZKpu28xgq_VMDvHTJHaYOtGJo",
-                "DATABASE_ID": "6868c5320038da5d0e63",
-                "USERS_COLLECTION": "6868c550003e370efd7b"
-            }
+            "path": "functions/send-push-notification"
         },
         {
             "$id": "cleanup-guests",
@@ -74,14 +68,7 @@
             "entrypoint": "src/main.js",
             "commands": "npm install",
             "specification": "s-0.5vcpu-512mb",
-            "path": "functions/recalculate-rolling-stats",
-            "variables": {
-                "DATABASE_ID": "6868c5320038da5d0e63",
-                "SOLO_GAMES_COLLECTION_ID": "solo_games",
-                "SOLO_GAME_STATS_COLLECTION_ID": "solo_game_stats",
-                "RIVAL_GAMES_COLLECTION_ID": "rival_games",
-                "RIVAL_GAME_STATS_COLLECTION_ID": "rival_game_stats"
-            }
+            "path": "functions/recalculate-rolling-stats"
         },
         {
             "$id": "69cce4b00016899f1f86",
@@ -151,14 +138,7 @@
                 ".npm"
             ],
             "deploymentRetention": 0,
-            "path": "functions/court-assignment",
-            "variables": {
-                "DATABASE_ID": "6868c5320038da5d0e63",
-                "GAMES_COLLECTION_ID": "6869c93b0015a8ea206c",
-                "TOURNAMENTS_COLLECTION_ID": "6868cc7200357edfe674",
-                "ENTRIES_COLLECTION_ID": "6869090300034c7b4e69",
-                "LOCKS_COLLECTION_ID": "court_assignment_locks"
-            }
+            "path": "functions/court-assignment"
         },
         {
             "$id": "6aa762f2002ceffb144e",
@@ -189,19 +169,7 @@
                 ".npm"
             ],
             "deploymentRetention": 0,
-            "path": "functions/game-complete",
-            "variables": {
-                "DATABASE_ID": "6868c5320038da5d0e63",
-                "GAMES_COLLECTION_ID": "6869c93b0015a8ea206c",
-                "TOURNAMENTS_COLLECTION_ID": "6868cc7200357edfe674",
-                "ENTRIES_COLLECTION_ID": "6869090300034c7b4e69",
-                "NOTIFICATIONS_COLLECTION_ID": "693b9eb0002c95d2ce6d",
-                "USERS_COLLECTION_ID": "6868c550003e370efd7b",
-                "LOCKS_COLLECTION_ID": "game_complete_locks",
-                "ELO_STATS_UPDATE_FUNCTION_ID": "6aa763220016e18cfbf2",
-                "COURT_ASSIGNMENT_FUNCTION_ID": "6aa7489700204fe65908",
-                "SEND_PUSH_FUNCTION_ID": "send-push-notification"
-            }
+            "path": "functions/game-complete"
         },
         {
             "$id": "6aa763220016e18cfbf2",
@@ -231,12 +199,7 @@
                 ".npm"
             ],
             "deploymentRetention": 0,
-            "path": "functions/elo-stats-update",
-            "variables": {
-                "DATABASE_ID": "6868c5320038da5d0e63",
-                "USER_STATS_COLLECTION_ID": "69840b50001fcdf7241e",
-                "TEAMS_COLLECTION_ID": "teams"
-            }
+            "path": "functions/elo-stats-update"
         }
     ]
 }
