@@ -1,7 +1,7 @@
 /**
  * Appwrite Function: elo-stats-update
  *
- * Updates a player's cumulative user_stats (games_played, games_won, PPR/DPR) and
+ * Updates a player's cumulative user_stats (games_played, games_won, streak, PPR/DPR) and
  * Elo rating for one completed game, plus saved-team Elo for doubles elimination
  * games. Called server-to-server by the game-complete function after it commits
  * the core game-completion cascade.
@@ -30,6 +30,10 @@ import {
   calculateDoublesIndividualElo,
   getTeamAverageRating,
 } from './elo.js';
+import {
+  computePlayerRoundContribution,
+  nextStreak,
+} from './playerRoundStats.js';
 
 const DATABASE_ID = process.env.DATABASE_ID;
 const USER_STATS_COLLECTION_ID = process.env.USER_STATS_COLLECTION_ID;
@@ -96,43 +100,12 @@ async function getOrCreateStats(tablesDB, userId) {
       total_differential_points: 0,
       ppr_current: 0,
       dpr_current: 0,
+      streak: 0,
       elo_rating: DEFAULT_ELO_RATING,
       elo_peak: DEFAULT_ELO_RATING,
       elo_games_played: 0,
     },
   });
-}
-
-// ---------------------------------------------------------------------------
-// Per-game PPR/DPR contribution from round_scores
-// ---------------------------------------------------------------------------
-
-function computeRoundContribution(game, playerId) {
-  let roundPoints = 0;
-  let opponentPoints = 0;
-  let roundsCount = 0;
-
-  if (game.round_scores) {
-    try {
-      const rounds = JSON.parse(game.round_scores);
-      const isTeam1 =
-        game.team1_player1 === playerId || game.team1_player2 === playerId;
-      roundsCount = rounds.length;
-      for (const round of rounds) {
-        if (isTeam1) {
-          roundPoints += round.team1RoundScore || 0;
-          opponentPoints += round.team2RoundScore || 0;
-        } else {
-          roundPoints += round.team2RoundScore || 0;
-          opponentPoints += round.team1RoundScore || 0;
-        }
-      }
-    } catch {
-      // Malformed round_scores — treat as no rounds rather than failing the update.
-    }
-  }
-
-  return { roundPoints, opponentPoints, roundsCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +126,7 @@ async function updatePlayerStats(
     const stats = await getOrCreateStats(tablesDB, playerId);
 
     const { roundPoints, opponentPoints, roundsCount } =
-      computeRoundContribution(game, playerId);
+      computePlayerRoundContribution(game, playerId);
     const newTotalRoundPoints = (stats.total_round_points || 0) + roundPoints;
     const newTotalRoundsPlayed = (stats.total_rounds_played || 0) + roundsCount;
     const newTotalDifferentialPoints =
@@ -206,6 +179,7 @@ async function updatePlayerStats(
           total_differential_points: newTotalDifferentialPoints,
           ppr_current: newPpr,
           dpr_current: newDpr,
+          streak: nextStreak(stats.streak, isWinner),
           elo_rating: newRating,
           elo_peak: Math.max(newRating, stats.elo_peak || DEFAULT_ELO_RATING),
           elo_games_played: currentGamesPlayed + 1,
