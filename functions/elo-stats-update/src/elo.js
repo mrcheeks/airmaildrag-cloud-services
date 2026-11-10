@@ -10,7 +10,7 @@ export const DEFAULT_ELO_RATING = 500;
 const BASE_K_FACTORS = {
   tournament_singles: 20,
   tournament_doubles: 16,
-  tournament_individual: 10,
+  tournament_individual: 20,
   solo_game: 5,
   rival_game: 12,
 };
@@ -74,18 +74,37 @@ export function getTeamAverageRating(player1Rating, player2Rating) {
   return Math.round((player1Rating + player2Rating) / 2);
 }
 
-export function calculateDoublesIndividualElo(
+/**
+ * Individual Elo for a tournament game (singles or doubles), rated only on the
+ * player's head-to-head rounds against each opponent they threw against.
+ * matchups: [{ opponentRating, myPoints, opponentPoints, rounds }]
+ * Each matchup is its own singles-style match at full K: result = points share
+ * (0-0 → ½) vs that opponent's pre-game rating. Returns
+ * { newRating, change, matchesPlayed } or null if the player threw no rounds.
+ */
+export function calculateMatchupElo(
   playerRating,
   playerGamesPlayed,
-  opponentTeamAvgRating,
-  won
+  matchups
 ) {
-  const kFactor = getKFactor(playerGamesPlayed, 'tournament_individual');
-  const actualScore = won ? 1 : 0;
-  return calculateNewRating(
-    playerRating,
-    opponentTeamAvgRating,
-    actualScore,
-    kFactor
-  );
+  const played = matchups.filter((m) => m.rounds > 0);
+  if (played.length === 0) return null;
+
+  let change = 0;
+  played.forEach((m, i) => {
+    const kFactor = getKFactor(playerGamesPlayed + i, 'tournament_individual');
+    const totalPoints = m.myPoints + m.opponentPoints;
+    const actual = totalPoints > 0 ? m.myPoints / totalPoints : 0.5;
+    const expected = getExpectedScore(playerRating, m.opponentRating);
+    change += Math.round(kFactor * (actual - expected));
+  });
+
+  return {
+    newRating: Math.min(
+      MAX_ELO_RATING,
+      Math.max(MIN_ELO_RATING, playerRating + change)
+    ),
+    change,
+    matchesPlayed: played.length,
+  };
 }

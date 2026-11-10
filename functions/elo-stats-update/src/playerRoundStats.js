@@ -9,6 +9,7 @@
  * their differential is measured against the opposing team's thrower in that round.
  * Rounds recorded before `*_active_player` existed fall back to alternation
  * (player 1 throws odd rounds, player 2 throws even rounds).
+ * `getPlayerMatchups` groups those rounds by opposing thrower for doubles Elo.
  */
 
 export function isDoublesGame(game) {
@@ -70,6 +71,49 @@ export function computePlayerRoundContribution(game, playerId) {
   });
 
   return result;
+}
+
+function getOpposingThrowerId(game, round, roundIndex, opposingTeam) {
+  const p1 = opposingTeam === 1 ? game.team1_player1 : game.team2_player1;
+  const p2 = opposingTeam === 1 ? game.team1_player2 : game.team2_player2;
+  if (!p2) return p1 || null;
+  if (!p1) return p2;
+  return getActiveThrower(round, roundIndex, opposingTeam) === 1 ? p1 : p2;
+}
+
+/**
+ * Head-to-head round matchups for a player: for each opposing thrower they faced,
+ * the raw round points each side scored and the number of rounds, counting only
+ * the rounds this player threw.
+ */
+export function getPlayerMatchups(game, playerId) {
+  const slot = getPlayerSlot(game, playerId);
+  if (!slot) return [];
+
+  const opposingTeam = slot.team === 1 ? 2 : 1;
+  const byOpponent = new Map();
+
+  parseRounds(game.round_scores).forEach((round, index) => {
+    if (!round || !isPlayerThrowingRound(game, round, index, slot)) return;
+    const opponentId = getOpposingThrowerId(game, round, index, opposingTeam);
+    if (!opponentId) return;
+
+    const isTeam1 = slot.team === 1;
+    const matchup = byOpponent.get(opponentId) ?? {
+      opponentId,
+      myPoints: 0,
+      opponentPoints: 0,
+      rounds: 0,
+    };
+    matchup.myPoints +=
+      (isTeam1 ? round.team1RoundScore : round.team2RoundScore) || 0;
+    matchup.opponentPoints +=
+      (isTeam1 ? round.team2RoundScore : round.team1RoundScore) || 0;
+    matchup.rounds++;
+    byOpponent.set(opponentId, matchup);
+  });
+
+  return [...byOpponent.values()];
 }
 
 /** Positive = consecutive wins, negative = consecutive losses. */

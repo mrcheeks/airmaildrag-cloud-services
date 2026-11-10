@@ -3,8 +3,11 @@
  *
  * Updates a player's cumulative user_stats (games_played, games_won, streak, PPR/DPR) and
  * Elo rating for one completed game, plus saved-team Elo for doubles elimination
- * games. Called server-to-server by the game-complete function after it commits
- * the core game-completion cascade.
+ * games. Every player (singles or doubles) is rated only on their own head-to-head
+ * rounds against each opponent they threw against — each opponent is a singles-style
+ * match scored by points share. Saved-team Elo is the average of the two players'
+ * new ratings. Called server-to-server by the
+ * game-complete function after it commits the core game-completion cascade.
  *
  * Action: update
  * Body: {
@@ -26,12 +29,12 @@
 import { Client, TablesDB, Account, Query, ID } from 'node-appwrite';
 import {
   DEFAULT_ELO_RATING,
-  calculateGameElo,
-  calculateDoublesIndividualElo,
+  calculateMatchupElo,
   getTeamAverageRating,
 } from './elo.js';
 import {
   computePlayerRoundContribution,
+  getPlayerMatchups,
   nextStreak,
 } from './playerRoundStats.js';
 
@@ -112,13 +115,18 @@ async function getOrCreateStats(tablesDB, userId) {
 // Per-player stats + Elo update, retried on transaction conflict
 // ---------------------------------------------------------------------------
 
+/**
+ * computeElo(currentRating, eloGamesPlayed) → { newRating, matchesPlayed } | null.
+ * Opponent ratings are captured by the caller from a pre-game snapshot so update
+ * order (and conflict retries) can't feed one player's new rating into another's.
+ * null = no Elo change for this game (player threw no rounds).
+ */
 async function updatePlayerStats(
   tablesDB,
   game,
   playerId,
   isWinner,
-  eloContext,
-  opponentRating,
+  computeElo,
   log
 ) {
   let lastError;
@@ -140,28 +148,15 @@ async function updatePlayerStats(
 
     const currentRating = stats.elo_rating || DEFAULT_ELO_RATING;
     const currentGamesPlayed = stats.elo_games_played || 0;
-    const eloResult =
-      eloContext === 'tournament_singles'
-        ? calculateGameElo({
-            winnerId: isWinner ? playerId : 'opponent',
-            loserId: isWinner ? 'opponent' : playerId,
-            winnerRating: isWinner ? currentRating : opponentRating,
-            loserRating: isWinner ? opponentRating : currentRating,
-            winnerGamesPlayed: isWinner ? currentGamesPlayed : 0,
-            loserGamesPlayed: isWinner ? 0 : currentGamesPlayed,
-            context: eloContext,
-          })
-        : null;
-    const newRating = eloResult
-      ? isWinner
-        ? eloResult.winner.newRating
-        : eloResult.loser.newRating
-      : calculateDoublesIndividualElo(
-          currentRating,
-          currentGamesPlayed,
-          opponentRating,
-          isWinner
-        ).newRating;
+    const eloResult = computeElo(currentRating, currentGamesPlayed);
+    const newRating = eloResult ? eloResult.newRating : currentRating;
+    const eloData = eloResult
+      ? {
+          elo_rating: newRating,
+          elo_peak: Math.max(newRating, stats.elo_peak || DEFAULT_ELO_RATING),
+          elo_games_played: currentGamesPlayed + eloResult.matchesPlayed,
+        }
+      : {};
 
     const tx = await tablesDB.createTransaction({ ttl: 60 });
     try {
@@ -180,9 +175,7 @@ async function updatePlayerStats(
           ppr_current: newPpr,
           dpr_current: newDpr,
           streak: nextStreak(stats.streak, isWinner),
-          elo_rating: newRating,
-          elo_peak: Math.max(newRating, stats.elo_peak || DEFAULT_ELO_RATING),
-          elo_games_played: currentGamesPlayed + 1,
+          ...eloData,
         },
         transactionId: tx.$id,
       });
@@ -243,8 +236,7 @@ async function updateTeamElo(
   team1Ids,
   team2Ids,
   team1Won,
-  team1AvgRating,
-  team2AvgRating,
+  newRatings,
   log
 ) {
   const [savedTeam1, savedTeam2] = await Promise.all([
@@ -252,24 +244,17 @@ async function updateTeamElo(
     findTeamByPlayers(tablesDB, team2Ids[0], team2Ids[1]),
   ]);
 
-  for (const [team, isTeam1, opponentAvg] of [
-    [savedTeam1, true, team2AvgRating],
-    [savedTeam2, false, team1AvgRating],
+  // Team Elo = average of the two players' new individual ratings.
+  for (const [team, isTeam1, ids] of [
+    [savedTeam1, true, team1Ids],
+    [savedTeam2, false, team2Ids],
   ]) {
     if (!team) continue;
     const teamWon = isTeam1 ? team1Won : !team1Won;
-    const result = calculateGameElo({
-      winnerId: 'team',
-      loserId: 'opponent',
-      winnerRating: teamWon ? team.elo_rating : opponentAvg,
-      loserRating: teamWon ? opponentAvg : team.elo_rating,
-      winnerGamesPlayed: teamWon ? team.games_played : 0,
-      loserGamesPlayed: teamWon ? 0 : team.games_played,
-      context: 'tournament_doubles',
-    });
-    const newRating = teamWon
-      ? result.winner.newRating
-      : result.loser.newRating;
+    const newRating = getTeamAverageRating(
+      newRatings[ids[0]] ?? DEFAULT_ELO_RATING,
+      newRatings[ids[1]] ?? DEFAULT_ELO_RATING
+    );
     try {
       await tablesDB.updateRow({
         databaseId: DATABASE_ID,
@@ -357,69 +342,42 @@ export default async ({ req, res, log, error }) => {
   try {
     const eloDeltas = {};
 
-    if (!isDoubles) {
-      // Singles: direct head-to-head Elo.
-      const [player1Id, player2Id] = playerIds;
-      const opponentIdOf = { [player1Id]: player2Id, [player2Id]: player1Id };
-      for (const playerId of playerIds) {
-        const opponentStats = await getOrCreateStats(
-          tablesDB,
-          opponentIdOf[playerId]
-        );
-        const result = await updatePlayerStats(
-          tablesDB,
-          game,
-          playerId,
-          winnerIds.includes(playerId),
-          'tournament_singles',
-          opponentStats.elo_rating || DEFAULT_ELO_RATING,
-          log
-        );
-        eloDeltas[playerId] = result;
-      }
-    } else {
-      // Doubles: each player's individual Elo vs opponent team average.
-      const team1 = [game.team1_player1, game.team1_player2].filter(Boolean);
-      const team2 = [game.team2_player1, game.team2_player2].filter(Boolean);
-      const allStats = {};
-      for (const playerId of playerIds) {
-        allStats[playerId] = await getOrCreateStats(tablesDB, playerId);
-      }
-      const team1AvgRating = getTeamAverageRating(
-        allStats[team1[0]]?.elo_rating || DEFAULT_ELO_RATING,
-        allStats[team1[1]]?.elo_rating || DEFAULT_ELO_RATING
-      );
-      const team2AvgRating = getTeamAverageRating(
-        allStats[team2[0]]?.elo_rating || DEFAULT_ELO_RATING,
-        allStats[team2[1]]?.elo_rating || DEFAULT_ELO_RATING
-      );
+    // Snapshot pre-game ratings so neither update order nor conflict retries
+    // feed one player's new rating into another player's calculation.
+    const preGameRating = {};
+    for (const playerId of playerIds) {
+      const stats = await getOrCreateStats(tablesDB, playerId);
+      preGameRating[playerId] = stats.elo_rating || DEFAULT_ELO_RATING;
+    }
 
-      for (const playerId of playerIds) {
-        const isTeam1 = team1.includes(playerId);
-        const opponentAvg = isTeam1 ? team2AvgRating : team1AvgRating;
-        const result = await updatePlayerStats(
-          tablesDB,
-          game,
-          playerId,
-          winnerIds.includes(playerId),
-          'tournament_individual',
-          opponentAvg,
-          log
-        );
-        eloDeltas[playerId] = result;
-      }
+    // Every player — singles or doubles — is rated only on their head-to-head
+    // rounds vs each opponent they threw against; each opponent is its own
+    // singles-style match (points share vs that opponent's pre-game rating).
+    const newRatings = {};
+    for (const playerId of playerIds) {
+      const matchups = getPlayerMatchups(game, playerId).map((m) => ({
+        opponentRating: preGameRating[m.opponentId] ?? DEFAULT_ELO_RATING,
+        myPoints: m.myPoints,
+        opponentPoints: m.opponentPoints,
+        rounds: m.rounds,
+      }));
+      const result = await updatePlayerStats(
+        tablesDB,
+        game,
+        playerId,
+        winnerIds.includes(playerId),
+        (currentRating, gamesPlayed) =>
+          calculateMatchupElo(currentRating, gamesPlayed, matchups),
+        log
+      );
+      eloDeltas[playerId] = result;
+      newRatings[playerId] = result.newRating;
+    }
 
-      if (tournamentType && tournamentType.includes('elimination')) {
-        await updateTeamElo(
-          tablesDB,
-          team1,
-          team2,
-          team1Won,
-          team1AvgRating,
-          team2AvgRating,
-          log
-        );
-      }
+    if (isDoubles && tournamentType && tournamentType.includes('elimination')) {
+      const team1 = [game.team1_player1, game.team1_player2];
+      const team2 = [game.team2_player1, game.team2_player2];
+      await updateTeamElo(tablesDB, team1, team2, team1Won, newRatings, log);
     }
 
     log(

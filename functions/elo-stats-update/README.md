@@ -1,8 +1,11 @@
 # elo-stats-update
 
-Updates a player's cumulative `user_stats` (games_played, games_won, PPR/DPR) and
+Updates a player's cumulative `user_stats` (games_played, games_won, PPR/DPR, streak) and
 Elo rating for one completed game, plus saved-team Elo for doubles elimination
-games. Called server-to-server by `game-complete` after it commits the core
+games. Every player (singles or doubles) is rated only on their head-to-head rounds
+against each opponent they threw against — each opponent is a singles-style match
+scored by points share — and saved-team Elo is the average of the two
+players' ratings. Called server-to-server by `game-complete` after it commits the core
 game-completion cascade — not intended to be called directly by clients. See
 [GAME_COMPLETION_ARCHITECTURE.md](../../GAME_COMPLETION_ARCHITECTURE.md) for the
 full design.
