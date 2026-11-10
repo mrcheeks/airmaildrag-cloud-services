@@ -8,6 +8,13 @@ Transaction and committed atomically. See
 [GAME_COMPLETION_ARCHITECTURE.md](../../GAME_COMPLETION_ARCHITECTURE.md) for the
 full design.
 
+For Switch Rounders only, court reassignment is synchronous and its response is
+returned as `courtAssignment`. A failed assignment does not undo the committed
+game: clients must report the game as saved and retry court reconciliation, not
+replay game completion or Elo updates. Other formats retain asynchronous court
+reassignment. Dynamic Switch Rounders doubles formation now belongs to the
+court-assignment function, not the client.
+
 ## 🧰 Usage
 
 ### POST /

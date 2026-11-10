@@ -19,8 +19,8 @@
  * round-based PPR/DPR stats via elo-stats-update. Double-elimination additionally
  * keeps its own legacy games_played/games_won counter on the `users` collection
  * (preserved as-is from the original DoubleEliminationManager, purely additive).
- * NOT handled here (still client-side): dynamic doubles team-formation for
- * continuous-flow rounders (switch_rounders/blind_draw), and phase-transition
+ * Switch Rounders doubles formation runs in court-assignment, called synchronously.
+ * NOT handled here (still client-side): blind_draw doubles team-formation and phase-transition
  * bracket generation (checkPhaseCompletion's actual elimination-phase kickoff).
  *
  * Required Environment Variables:
@@ -1137,14 +1137,26 @@ export default async ({ req, res, log, error }) => {
       log
     );
 
+    let courtAssignment;
     try {
-      await functionsClient.createExecution({
+      const execution = await functionsClient.createExecution({
         functionId: COURT_ASSIGNMENT_FUNCTION_ID,
         body: JSON.stringify({ tournamentId: game.tournament_id, session }),
-        async: true,
+        async: tournament.tournament_type !== 'switch_rounders',
       });
+      if (tournament.tournament_type === 'switch_rounders') {
+        courtAssignment = JSON.parse(execution.responseBody || '{}');
+        if (!courtAssignment.success) {
+          log(
+            `[game-complete] court-assignment failed: ${courtAssignment.error || courtAssignment.reason}`
+          );
+        }
+      }
     } catch (err) {
       log(`[game-complete] failed to trigger court-assignment: ${err.message}`);
+      if (tournament.tournament_type === 'switch_rounders') {
+        courtAssignment = { success: false, assigned: 0, error: err.message };
+      }
     }
 
     const summary = {
@@ -1153,6 +1165,7 @@ export default async ({ req, res, log, error }) => {
       winner: winnerId,
       eloDeltas,
       nextGameAssigned,
+      ...(courtAssignment ? { courtAssignment } : {}),
     };
     log(
       `[game-complete] ${JSON.stringify(summary)} (${Date.now() - startedAt}ms)`

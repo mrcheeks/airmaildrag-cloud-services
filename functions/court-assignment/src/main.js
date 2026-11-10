@@ -15,6 +15,7 @@
  */
 
 import { Client, Databases, Account, Query, ID } from 'node-appwrite';
+import { reconcileSwitch } from './reconcileSwitch.js';
 
 const DATABASE_ID = process.env.DATABASE_ID;
 const GAMES_COLLECTION_ID = process.env.GAMES_COLLECTION_ID;
@@ -431,7 +432,32 @@ function getRoundersType(format) {
 // Core reconcile — runs once per execution, while the lock is held
 // ---------------------------------------------------------------------------
 
-async function reconcile(databases, tournamentId, log) {
+async function listAllDocuments(databases, collectionId, queries) {
+  const documents = [];
+  let cursor;
+  while (true) {
+    const page = await databases.listDocuments({
+      databaseId: DATABASE_ID,
+      collectionId,
+      queries: [
+        ...queries,
+        Query.orderAsc('$id'),
+        Query.limit(100),
+        ...(cursor ? [Query.cursorAfter(cursor)] : []),
+      ],
+    });
+    documents.push(...page.documents);
+    if (page.documents.length < 100) return documents;
+    cursor = page.documents.at(-1).$id;
+  }
+}
+
+async function reconcile(
+  databases,
+  tournamentId,
+  log,
+  completeIfFinished = false
+) {
   const tournament = await databases.getDocument({
     databaseId: DATABASE_ID,
     collectionId: TOURNAMENTS_COLLECTION_ID,
@@ -444,11 +470,69 @@ async function reconcile(databases, tournamentId, log) {
   }
 
   const phase = tournament.current_phase;
+  if (
+    tournament.tournament_type === 'switch_rounders' &&
+    tournament.tournament_state === 'completed'
+  ) {
+    return {
+      assigned: 0,
+      reason: 'completed',
+      phaseComplete: true,
+      completionClaimed: false,
+    };
+  }
   if (phase !== 'rounders' && phase !== 'elimination') {
     log(
       `[reconcile] tournament ${tournamentId} phase '${phase}' not active, skipping`
     );
     return { assigned: 0, reason: 'inactive_phase' };
+  }
+
+  if (
+    phase === 'rounders' &&
+    tournament.tournament_type === 'switch_rounders'
+  ) {
+    const [entries, games] = await Promise.all([
+      listAllDocuments(databases, ENTRIES_COLLECTION_ID, [
+        Query.equal('tournament', tournamentId),
+        Query.equal('status', 'checked_in'),
+      ]),
+      listAllDocuments(databases, GAMES_COLLECTION_ID, [
+        Query.equal('tournament_id', tournamentId),
+        Query.equal('phase', 'rounders'),
+      ]),
+    ]);
+    const result = await reconcileSwitch({
+      tournament,
+      entries,
+      games,
+      completeIfFinished,
+      createGame: (data) =>
+        databases.createDocument({
+          databaseId: DATABASE_ID,
+          collectionId: GAMES_COLLECTION_ID,
+          documentId: ID.unique(),
+          data,
+        }),
+      assignGame: (game, court) =>
+        databases.updateDocument({
+          databaseId: DATABASE_ID,
+          collectionId: GAMES_COLLECTION_ID,
+          documentId: game.$id,
+          data: { court, status: 'pending' },
+        }),
+      completeTournament: () =>
+        databases.updateDocument({
+          databaseId: DATABASE_ID,
+          collectionId: TOURNAMENTS_COLLECTION_ID,
+          documentId: tournamentId,
+          data: { tournament_state: 'completed', current_phase: 'completed' },
+        }),
+    });
+    log(
+      `[reconcile] switch: assigned=${result.assigned}, complete=${result.phaseComplete}`
+    );
+    return result;
   }
 
   const availableCourts = await computeAvailableCourts(databases, tournament);
@@ -683,7 +767,7 @@ export default async ({ req, res, log, error }) => {
     return res.json({ success: false, error: 'Invalid JSON body' }, 400);
   }
 
-  const { tournamentId, session } = body;
+  const { tournamentId, session, completeIfFinished = false } = body;
   if (!tournamentId) {
     return res.json({ success: false, error: 'Missing tournamentId' }, 400);
   }
@@ -718,7 +802,12 @@ export default async ({ req, res, log, error }) => {
 
   const startedAt = Date.now();
   try {
-    const result = await reconcile(databases, tournamentId, log);
+    const result = await reconcile(
+      databases,
+      tournamentId,
+      log,
+      completeIfFinished === true
+    );
     return res.json({ success: true, ...result });
   } catch (err) {
     error(`[reconcile] tournament ${tournamentId} failed: ${err.message}`);
